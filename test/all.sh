@@ -3,12 +3,12 @@
 
 set -uo pipefail
 
-script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 status=0
 
 for suite in test/run-tests.sh test/install-tests.sh; do
     printf '\n=== %s ===\n' "$suite"
-    bash "$script_dir/$suite" || status=1
+    bash "$repo_dir/$suite" || status=1
 done
 
 printf '\n'
