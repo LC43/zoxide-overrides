@@ -1,0 +1,7 @@
+# the real overrides file lives outside the repo, but ignore it if copied here
+overrides
+overrides.stamp
+
+# editor / OS noise
+*.swp
+.DS_Store

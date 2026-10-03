@@ -1,0 +1,8 @@
+# name<TAB>path — managed by `zo`; edit with `zo <name> <path>`
+#
+# One override per line: a single-word name, a literal tab, an absolute path.
+# Lines starting with # are ignored, as are lines without a tab.
+#
+#   zo demo /srv/www/goodomens.studio/astro/repo
+#   zo -d demo
+#   zo -l
