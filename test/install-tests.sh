@@ -84,6 +84,18 @@ is "rejects unknown shells" "1" "$?"
 out=$("$installer" --bogus 2>&1)
 is "rejects unknown flags" "1" "$?"
 
+out=$("$installer" --help 2>&1)
+rc=$?
+is "--help exits 0" "0" "$rc"
+for flag in --shell --rc --uninstall; do
+    [[ $out == *"$flag"* ]] && ok "--help documents $flag" \
+        || no "--help documents $flag" "got [$out]"
+done
+[[ $out != *"[[ -r"* ]] && ok "--help prints prose, not the script body" \
+    || no "--help prints prose, not the script body" "got [$out]"
+
+is "-h is an alias for --help" "$("$installer" --help 2>&1)" "$("$installer" -h 2>&1)"
+
 out=$("$installer" --shell 2>&1)
 is "rejects a flag with no value" "1" "$?"
 

@@ -111,14 +111,37 @@ exactly that.
 ./test/all.sh
 ```
 
-Runs in a throwaway `HOME`. `test/run-tests.sh` (53 assertions) covers the `zo`
+Runs in a throwaway `HOME`. `test/run-tests.sh` (69 assertions) covers the `zo`
 command, `z`/`zi` routing, subpaths, persistence, cross-process reloads,
-malformed input, and both completion functions. `test/install-tests.sh`
-(20 assertions) covers the installer: marker block, idempotence, uninstall,
-`ZDOTDIR`, and that the block it writes actually loads. Requires `zoxide`;
-`fzf` only for the interactive `zi` assertion.
+malformed input, both completion functions, and the zsh path (skipped when zsh
+is absent). `test/install-tests.sh` (26 assertions) covers the installer:
+marker block, idempotence, uninstall, `--help`, `ZDOTDIR`, and that the block it
+writes actually loads. Requires `zoxide`; `fzf` is stubbed where a picker would
+otherwise open.
 
 Individual suites: `./test/run-tests.sh`, `./test/install-tests.sh`.
+
+### Coverage
+
+```sh
+./test/coverage.sh
+```
+
+```
+zoxide-overrides.sh  111/112 statements  99.1%
+install.sh            33/33  statements  100.0%
+```
+
+Line coverage measured by re-running both suites under `set -x` with a
+file-annotated `PS4` and the trace on fd 9. It is a homegrown approximation, not
+gcov: comments, function definitions, case labels and structural closers are
+excluded from the denominator because xtrace never reports them, and a line
+only ever executed inside a construct xtrace attributes elsewhere can read as
+unexecuted. Read it as "which lines are provably reached", not as a guarantee.
+
+The one uncovered line is `typeset -gA _ZO_OVERRIDES=()`, the zsh branch of the
+array declaration. It is unreachable under bash, so covering it needs a zsh in
+CI.
 
 ## Notes and limits
 

@@ -190,6 +190,60 @@ err=$(z temp 2>&1 >/dev/null)
 is "did not move" "$HOME" "$PWD"
 zo_noop -d temp
 
+printf '\n== zo -l output shapes ==\n'
+
+: >"$sandbox/empty-overrides"
+out=$(_ZO_OVERRIDES_FILE=$sandbox/empty-overrides zo -l)
+[[ $out == *"no overrides"* ]] && ok "empty map says so" || no "empty map says so" "got [$out]"
+
+printf 'ghost\t/nonexistent-zzz\n' >>"$_ZO_OVERRIDES_FILE"
+out=$(zo -l)
+[[ $out == *ghost* && $out == *"[missing]"* ]] && ok "missing target is flagged" \
+    || no "missing target is flagged" "got [$out]"
+zo_noop -d ghost
+
+printf '\n== zo argument errors ==\n'
+
+zo -d >/dev/null 2>&1
+is "zo -d with no name exits 2" "2" "$?"
+
+out=$(zo -d a b 2>&1 >/dev/null)
+[[ $out == *"usage:"* ]] && ok "zo -d with two args prints usage" || no "zo -d with two args prints usage" "got [$out]"
+
+out=$(zo -zzz 2>&1 >/dev/null)
+[[ $out == *"usage:"* ]] && ok "unknown flag prints usage" || no "unknown flag prints usage" "got [$out]"
+zo -zzz >/dev/null 2>&1
+is "unknown flag exits 2" "2" "$?"
+
+out=$(zo one two three 2>&1 >/dev/null)
+[[ $out == *"usage:"* ]] && ok "too many args prints usage" || no "too many args prints usage" "got [$out]"
+
+printf '\n== zi falls through for non-overrides ==\n'
+
+# A non-override name must reach zoxide, which hands its candidates to fzf.
+# Stub fzf with a failure so the run is deterministic and never opens a picker.
+mkdir -p "$sandbox/bin"
+cat >"$sandbox/bin/fzf" <<'STUB'
+#!/bin/sh
+cat >/dev/null
+exit 1
+STUB
+chmod +x "$sandbox/bin/fzf"
+
+at_home
+err=$(PATH=$sandbox/bin:$PATH zi src 2>&1 >/dev/null)
+rc=$?
+[[ $rc -ne 0 ]] && ok "zi delegates to zoxide for unpinned names" \
+    || no "zi delegates to zoxide for unpinned names" "exit $rc"
+[[ $err == *zoxide* ]] && ok "and the failure comes from zoxide" \
+    || no "and the failure comes from zoxide" "got [$err]"
+is "zi did not move" "$HOME" "$PWD"
+
+at_home
+zi nomatch_zzz >/dev/null 2>&1
+is "zi on an unknown name errors" "1" "$?"
+is "zi on an unknown name stays put" "$HOME" "$PWD"
+
 printf '\n== persistence and reload ==\n'
 
 out=$(
@@ -276,13 +330,52 @@ is "z <override> ../<TAB> is blocked" "" "$(zcomp z demo ../)"
 is "z <override> x/../<TAB> is blocked" "" "$(zcomp z demo x/../)"
 is "z <query> <path><TAB> completes dirs" "$site/other" "$(zcomp z other "$site/oth")"
 
+# stock zoxide registers its completion only in interactive shells, so the
+# delegation arm is normally dead in a test run: fake it and check both arms
+__zoxide_z_complete() { COMPREPLY=(from-zoxide); }
+is "delegates to zoxide's own completion" "from-zoxide" "$(zcomp z someword)"
+is "delegates for multi-word queries" "from-zoxide" "$(zcomp z some other)"
+unset -f __zoxide_z_complete
+is "falls back to directories when zoxide has none" "" "$(zcomp z somethin)"
+
+printf '\n== zsh ==\n'
+
+if command -v zsh >/dev/null 2>&1; then
+    zsh_dir=$sandbox/zsh
+    mkdir -p "$zsh_dir/target"
+
+    # `zo` and the z/zi wrappers are shell-agnostic; only completion is bash-only
+    zsh_out=$(
+        _ZO_OVERRIDES_FILE=$zsh_dir/overrides zsh -c '
+            eval "$(zoxide init zsh)"
+            source "$1"
+            zo demo "$2"
+            z demo
+            pwd
+            declare -F _zo_z_complete >/dev/null &&
+                echo "completion: registered" || echo "completion: none"
+        ' _ "$plugin" "$zsh_dir/target" 2>&1 | tail -2
+    )
+    is "zo and z work in zsh" "$zsh_dir/target
+completion: none" "$zsh_out"
+else
+    printf '  SKIP zsh not installed\n'
+fi
+
 printf '\n== sourced too early ==\n'
 
-early=$(
-    bash -c 'source "$1" 2>/dev/null; declare -F z >/dev/null && echo wrapped || echo untouched' \
-        _ "$plugin"
-)
+early_script=$sandbox/early.bash
+cat >"$early_script" <<'EARLY'
+source "$1"
+declare -F z >/dev/null && echo wrapped || echo untouched
+EARLY
+
+early=$(bash "$early_script" "$plugin" 2>/dev/null)
 is "z is left alone without zoxide" "untouched" "$early"
+
+warn=$(bash "$early_script" "$plugin" 2>&1 >/dev/null)
+[[ $warn == *"zoxide init"* ]] && ok "warns it must be sourced after zoxide" \
+    || no "warns it must be sourced after zoxide" "got [$warn]"
 
 printf '\n%s passed, %s failed\n' "$pass_count" "$fail_count"
 [[ $fail_count -eq 0 ]]
