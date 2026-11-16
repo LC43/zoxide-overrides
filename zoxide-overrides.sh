@@ -4,6 +4,7 @@
 # Source this AFTER `eval "$(zoxide init <shell>)"`:
 #
 #     zo good /srv/www/goodomens.studio/astro/repo   # create/update
+#     zo good                                        # pick the path in fzf
 #     zo -d good                                          # delete
 #     zo -l                                               # list
 #
@@ -67,6 +68,7 @@ _zo_usage() {
     cat <<'EOF'
 usage:
   zo <name> <path>   make `z <name>` jump to <path>, ignoring zoxide ranking
+  zo <name>          pick <path> from a list, then edit the command line
   zo -d <name>       remove an override
   zo -l              list overrides
   zo -h              this help
@@ -127,6 +129,79 @@ function _zo_complete() {
     esac
 }
 
+# Candidate paths for `zo <name>`: the pinned targets whose name starts with
+# the key, then zoxide's own matches for it. Deduped with the first hit
+# winning, so pinned targets stay on top of the picker.
+_zo_pick_candidates() {
+    local key=$1 name path
+    {
+        for name in "${!_ZO_OVERRIDES[@]}"; do
+            [[ $name == "$key"* ]] || continue
+            path=${_ZO_OVERRIDES[$name]}
+            [[ -d $path ]] && printf '%s\n' "$path"
+        done
+        # matches the last component of a path, as a substring: `repo` and
+        # `epo` both find .../astro/repo
+        zoxide query -l -- "$key" 2>/dev/null
+    } | awk '!seen[$0]++'
+}
+
+# Put $1 back on an editable line and leave the result in REPLY. bash gets a
+# readline prompt pre-filled with it, zsh gets `vared`. With no terminal on
+# stdin — a script, a pipe, a test — there is nothing to edit, so the line is
+# taken as-is unless stdin offers a replacement.
+_zo_edit_line() {
+    REPLY=$1
+    if [[ -n ${ZSH_VERSION:-} ]]; then
+        if [[ -t 0 ]]; then
+            vared REPLY || return 1
+        fi
+    elif [[ -t 0 ]]; then
+        IFS= read -r -e -i "$1" || return 1
+    else
+        IFS= read -r
+        [[ -n ${REPLY-} ]] || REPLY=$1
+    fi
+}
+
+# `zo <name>`: offer the candidates in fzf, then hand the completed command
+# back on an editable line, so the path can still be changed before pinning.
+_zo_pick() {
+    local key=$1 candidates picked REPLY
+    # the drawer `zi` opens: an inline window at the bottom of the screen, not
+    # a full alternate page. The rest mirrors zoxide's own fzf flags.
+    local -a fzf_opts=(
+        --height=45%
+        --border=sharp
+        --layout=reverse
+        --info=inline
+        --no-sort
+        --exact
+        --cycle
+        --keep-right
+        --tabstop=1
+        --exit-0
+        --bind=ctrl-z:ignore,btab:up,tab:down
+    )
+    candidates=$(_zo_pick_candidates "$key")
+    if [[ -z $candidates ]]; then
+        printf 'zo: no candidate paths for %s\n' "$key" >&2
+        return 1
+    fi
+    if ! command -v fzf >/dev/null 2>&1; then
+        printf 'zo: fzf is needed to pick a path; candidates were:\n%s\n' \
+            "$candidates" >&2
+        return 1
+    fi
+    picked=$(printf '%s\n' "$candidates" | fzf "${fzf_opts[@]}" \
+        --prompt="zo $key ") || return 1
+    [[ -n $picked ]] || return 1
+    # %q so a path with spaces survives the trip through the editable line
+    _zo_edit_line "$(printf 'zo %q %q' "$key" "$picked")" || return 1
+    [[ -n ${REPLY//[[:space:]]/} ]] || return 1
+    eval "$REPLY"
+}
+
 function zo() {
     _zo_load_overrides
     case ${1-} in
@@ -154,6 +229,12 @@ function zo() {
             return 2
             ;;
         *)
+            # `zo <name>` on its own opens the picker instead of demanding a
+            # path; the picked path comes back on an editable line.
+            if [[ $# -eq 1 ]]; then
+                _zo_pick "$1"
+                return $?
+            fi
             [[ $# -eq 2 ]] || {
                 _zo_usage >&2
                 return 2
