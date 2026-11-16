@@ -44,6 +44,7 @@ Running it twice is a no-op. Uninstalling does not delete your overrides file.
 
 ```sh
 zo <name> <path>   # create or update
+zo <name>          # pick <path> from a list, then edit the command line
 zo -d <name>       # delete
 zo -l              # list
 zo -h              # help
@@ -59,10 +60,33 @@ z goo         # zoxide: /srv/www/goodomens.studio (no override named "goo")
 z repo        # zoxide: whichever repo ranks highest
 ```
 
+### Picking a path
+
+`zo <name>` with no path opens a picker instead of demanding one — an inline
+drawer at the bottom of the screen, the same window `zi` opens, not a
+full-screen page. It offers the pinned targets whose name starts with
+`<name>`, then zoxide's own matches for the same word (`repo` and `epo` both
+find `.../astro/repo`), with duplicates dropped.
+
+What you pick is handed back as a complete command line, ready to edit:
+
+```console
+$ zo rep
+zo rep /srv/www/goodomens.studio/astro/repo
+```
+
+Change the path as much as you like —
+`zo rep /srv/www/goodomens.studio/astro/repo/src` — and press Enter to pin it.
+Esc or Ctrl-C cancels and leaves the override untouched.
+
+The picker needs `fzf` on your `PATH`; without it the candidates are printed to
+stderr instead. When stdin is not a terminal there is nothing to edit, so the
+completed line runs as-is — unless stdin supplies a replacement line, which is
+how the test suite drives the editable prompt.
+
 ### Subpaths
 
-An override name also accepts a relative subpath, so you can tab into the tree
-without repeating the whole path:
+An override name also accepts a relative subpath, so you can tab into the tree without repeating the whole path:
 
 ```sh
 z good              # /srv/www/goodomens.studio/astro/repo
@@ -111,13 +135,15 @@ exactly that.
 ./test/all.sh
 ```
 
-Runs in a throwaway `HOME`. `test/run-tests.sh` (69 assertions) covers the `zo`
-command, `z`/`zi` routing, subpaths, persistence, cross-process reloads,
+Runs in a throwaway `HOME`. `test/run-tests.sh` (83 assertions) covers the `zo`
+command, the `zo <name>` picker (stubbed fzf, plus a pty for the interactive
+line), `z`/`zi` routing, subpaths, persistence, cross-process reloads,
 malformed input, both completion functions, and the zsh path (skipped when zsh
 is absent). `test/install-tests.sh` (26 assertions) covers the installer:
 marker block, idempotence, uninstall, `--help`, `ZDOTDIR`, and that the block it
-writes actually loads. Requires `zoxide`; `fzf` is stubbed where a picker would
-otherwise open.
+writes actually loads. Requires `zoxide`; `fzf` is stubbed wherever a picker
+would otherwise open, and the pty test is skipped when `script(1)` cannot
+allocate one.
 
 Individual suites: `./test/run-tests.sh`, `./test/install-tests.sh`.
 
@@ -128,7 +154,7 @@ Individual suites: `./test/run-tests.sh`, `./test/install-tests.sh`.
 ```
 
 ```
-zoxide-overrides.sh  111/112 statements  99.1%
+zoxide-overrides.sh  138/141 statements  97.9%
 install.sh            33/33  statements  100.0%
 ```
 
@@ -139,9 +165,9 @@ excluded from the denominator because xtrace never reports them, and a line
 only ever executed inside a construct xtrace attributes elsewhere can read as
 unexecuted. Read it as "which lines are provably reached", not as a guarantee.
 
-The one uncovered line is `typeset -gA _ZO_OVERRIDES=()`, the zsh branch of the
-array declaration. It is unreachable under bash, so covering it needs a zsh in
-CI.
+The three uncovered lines are all zsh-only: `typeset -gA _ZO_OVERRIDES=()`, the
+array declaration, and the `vared` arm of the editable prompt. Neither is
+reachable under bash, so covering them needs a zsh in CI.
 
 ## Notes and limits
 
@@ -151,6 +177,8 @@ CI.
   prefer something else" mode.
 - Completion is bash-only. The `zo` command and `z`/`zi` wrappers work in zsh
   too, but `compdef` is not wired up.
+- The picker (`zo <name>`) needs `fzf` and a terminal; the editable line is
+  readline under bash and `vared` under zsh.
 - The plugin does not wrap `cd`; only `z` and `zi` are intercepted.
 
 ## License

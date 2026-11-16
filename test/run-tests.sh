@@ -98,11 +98,108 @@ is "zo rejects a missing dir" "zo: not a directory: $sandbox/nope" "$out"
 out=$(zo -d nosuch 2>&1)
 is "zo -d on unknown name fails" "zo: no such override: nosuch" "$out"
 
-zo onearg >/dev/null 2>&1
-is "zo needs two args" "2" "$?"
-
 out=$(zo -h 2>&1 | head -1)
 is "zo -h prints usage" "usage:" "$out"
+
+printf '\n== zo <name> picker ==\n'
+
+# stub fzf: record the candidates it was offered, then hand back $ZO_FZF_PICK
+mkdir -p "$sandbox/bin"
+cat >"$sandbox/bin/fzf" <<'STUB'
+#!/bin/sh
+printf '%s\n' "$@" >"$ZO_FZF_ARGS"
+cat >"$ZO_FZF_INPUT"
+printf '%s\n' "$ZO_FZF_PICK"
+STUB
+chmod +x "$sandbox/bin/fzf"
+
+export ZO_FZF_INPUT=$sandbox/picker.in
+export ZO_FZF_ARGS=$sandbox/picker.args
+export ZO_FZF_PICK=$repo
+
+# a pinned target whose name matches the key, so the picker has one of each
+zo_noop rep "$site/other"
+
+# nothing to edit without a terminal on stdin: the completed line runs as-is
+out=$(PATH=$sandbox/bin:$PATH zo rep </dev/null)
+is "zo <name> pins the path fzf picked" "rep -> $repo" "$out"
+_zo_load_overrides
+is "and stores it" "$repo" "${_ZO_OVERRIDES[rep]-}"
+is "picker offers the pinned target first, zoxide's match second" \
+    "$site/other
+$repo" "$(cat "$ZO_FZF_INPUT")"
+grep -q -- '--height=45%' "$ZO_FZF_ARGS" &&
+    ok "the picker is an inline drawer, like zi" ||
+    no "the picker is an inline drawer, like zi" \
+    "$(tr '\n' ' ' <"$ZO_FZF_ARGS")"
+
+# stdin stands in for the editable line: change the path, then press Enter
+zo_noop rep "$site/other"
+out=$(printf 'zo rep %s\n' "$repo/src" | PATH=$sandbox/bin:$PATH zo rep)
+is "the edited line is what gets run" "rep -> $repo/src" "$out"
+_zo_load_overrides
+is "so the path can be extended before pinning" "$repo/src" "${_ZO_OVERRIDES[rep]-}"
+
+# a picked path with a space has to survive the editable line intact
+mkdir -p "$site/with space"
+zo_noop sp "$site/with space"
+ZO_FZF_PICK="$site/with space"
+out=$(PATH=$sandbox/bin:$PATH zo sp </dev/null)
+is "a path with spaces round-trips" "sp -> $site/with space" "$out"
+_zo_load_overrides
+is "and is stored whole" "$site/with space" "${_ZO_OVERRIDES[sp]-}"
+zo_noop -d sp
+ZO_FZF_PICK=$repo
+
+# Esc in the picker: fzf exits non-zero, so nothing is pinned
+cat >"$sandbox/bin/fzf" <<'STUB'
+#!/bin/sh
+cat >/dev/null
+exit 1
+STUB
+chmod +x "$sandbox/bin/fzf"
+zo_noop rep "$site/other"
+PATH=$sandbox/bin:$PATH zo rep </dev/null >/dev/null 2>&1
+is "cancelling the picker fails" "1" "$?"
+_zo_load_overrides
+is "and leaves the override alone" "$site/other" "${_ZO_OVERRIDES[rep]-}"
+
+# a key that matches neither an override name nor a zoxide path
+zo zzz_nope </dev/null >/dev/null 2>&1
+is "a key with no candidates fails" "1" "$?"
+err=$(zo zzz_nope 2>&1 </dev/null)
+[[ $err == *"no candidate paths"* ]] && ok "and says why" \
+    || no "and says why" "got [$err]"
+
+# without fzf there is no picker, but the candidates are still worth showing
+mkdir -p "$sandbox/nofzf"
+ln -sf "$(command -v zoxide)" "$sandbox/nofzf/zoxide"
+ln -sf "$(command -v awk)" "$sandbox/nofzf/awk"
+err=$(PATH=$sandbox/nofzf zo rep 2>&1 </dev/null)
+[[ $err == *"fzf is needed"* && $err == *"$repo"* ]] &&
+    ok "without fzf the candidates go to stderr" ||
+    no "without fzf the candidates go to stderr" "got [$err]"
+PATH=$sandbox/nofzf zo rep </dev/null >/dev/null 2>&1
+is "and the pick fails" "1" "$?"
+
+# the interactive branch, driven through a pty: the pre-filled line comes back
+# for editing and Enter runs it. Skipped where script(1) cannot open a pty.
+if printf '' | script -qec 'test -t 0' /dev/null >/dev/null 2>&1; then
+    cat >"$sandbox/bin/fzf" <<'STUB'
+#!/bin/sh
+cat >/dev/null
+printf '%s\n' "$ZO_FZF_PICK"
+STUB
+    chmod +x "$sandbox/bin/fzf"
+    pty_cmd="PATH=\"$sandbox/bin:\$PATH\" bash -c 'eval \"\$(zoxide init bash)\"; source \"$plugin\"; zo rep'"
+    pty_out=$(printf '\n' | script -qec "$pty_cmd" /dev/null | tr -d '\r')
+    [[ $pty_out == *"rep -> $repo"* ]] && ok "the pre-filled line runs on Enter" \
+        || no "the pre-filled line runs on Enter" "got [$pty_out]"
+else
+    printf '  SKIP script(1) cannot drive a pty\n'
+fi
+
+zo_noop -d rep
 
 zo_noop "spaced name" "$site/other"
 
